@@ -1,0 +1,102 @@
+# PHP-Apache Deployment for Kubernetes Resilience Experiment
+# Based on: https://k8s.io/examples/application/php-apache.yaml
+# This deployment serves as our target application for load testing and failure simulation
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: php-apache
+  namespace: k8s-resilience-experiment
+  labels:
+    app: php-apache
+    experiment: resilience-test
+spec:
+  replicas: 3  # Start with 3 replicas for resilience testing
+  selector:
+    matchLabels:
+      run: php-apache
+  template:
+    metadata:
+      labels:
+        run: php-apache
+        app: php-apache
+    spec:
+      containers:
+      - name: php-apache
+        image: registry.k8s.io/hpa-example
+        ports:
+        - containerPort: 80
+          name: http
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 200m
+            memory: 64Mi
+        # Liveness probe - Kubernetes will restart container if this fails
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 3
+          timeoutSeconds: 2
+        # Readiness probe - Pod won't receive traffic until this passes
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 3
+          failureThreshold: 3
+          timeoutSeconds: 2
+      # Spread pods across nodes for better availability
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            run: php-apache
+---
+# Service to expose the php-apache deployment
+apiVersion: v1
+kind: Service
+metadata:
+  name: php-apache
+  namespace: k8s-resilience-experiment
+  labels:
+    run: php-apache
+    experiment: resilience-test
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  selector:
+    run: php-apache
+---
+# NodePort Service for external access (useful in Killercoda)
+apiVersion: v1
+kind: Service
+metadata:
+  name: php-apache-nodeport
+  namespace: k8s-resilience-experiment
+  labels:
+    run: php-apache
+    experiment: resilience-test
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30080
+    protocol: TCP
+    name: http
+  selector:
+    run: php-apache
+

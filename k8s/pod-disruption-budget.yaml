@@ -1,0 +1,17 @@
+# Pod Disruption Budget
+# Ensures minimum availability during voluntary disruptions
+# This is part of Kubernetes' self-healing infrastructure
+
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: php-apache-pdb
+  namespace: k8s-resilience-experiment
+  labels:
+    experiment: resilience-test
+spec:
+  minAvailable: 2  # At least 2 pods must always be available
+  selector:
+    matchLabels:
+      run: php-apache
+
