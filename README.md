@@ -572,36 +572,51 @@ These capabilities, demonstrated under controlled failure conditions with contin
 
 ### Prerequisites
 
-- Kubernetes cluster (v1.25+)
+- Kubernetes cluster (v1.25+) - Killercoda playground works great
 - `kubectl` configured and connected
 - Network access to the cluster
 
-### Installation
+### Installation & Setup
 
 ```bash
-# Clone or copy the repository
-cd Cloud_k8s_impl
+# Clone or copy the repository to Killercoda
+cd ~/k8s-experiments  # or your directory name
 
 # Make scripts executable
 chmod +x scripts/*.sh
 
-# Deploy the experiment environment
+# Run the setup script (installs metrics-server, locust, and deploys application)
 ./scripts/setup.sh
 ```
 
+The setup script automatically:
+1. Installs **metrics-server** with `--kubelet-insecure-tls` for HPA support
+2. Installs **Locust** locally via `apt install python3-locust`
+3. Deploys the **php-apache** application (3 replicas)
+4. Configures **HPA** (scales 3-8 pods based on CPU)
+5. Configures **PDB** (maintains minimum 2 available pods)
+
 ### Running the Experiment
 
+**Terminal 1: Start Locust Load Generator**
 ```bash
-# Terminal 1: Start monitoring
-./scripts/monitor.sh
+cd ~/k8s-experiments
+locust -f locust/locustfile.py --host=http://localhost:30080
+```
 
-# Terminal 2: Access Locust UI (port 30089)
-# Start a test with 50 users, spawn rate 10
+**Access Locust UI:**
+- In Killercoda: Click menu → **Traffic/Ports** → Enter **8089** → Click Access
+- Start test: **50 users**, spawn rate **10**
 
-# Terminal 3: Inject failures
+**Terminal 2: Monitor the Cluster**
+```bash
+watch -n 2 'kubectl get pods,hpa -n k8s-resilience-experiment'
+```
+
+**Terminal 3: Inject Failures**
+```bash
+cd ~/k8s-experiments
 ./scripts/simulate-pod-failure.sh
-# or
-./scripts/simulate-node-failure.sh
 ```
 
 ### Cleanup
@@ -621,69 +636,79 @@ chmod +x scripts/*.sh
 1. Go to [Killercoda Kubernetes Playground](https://killercoda.com/playgrounds/scenario/kubernetes)
 2. Wait for the environment to initialize
 
-### Step 2: Clone the Experiment
+### Step 2: Upload/Create the Experiment Files
 
 ```bash
-# In the Killercoda terminal
-git clone https://github.com/YOUR_USERNAME/Cloud_k8s_impl.git
-cd Cloud_k8s_impl
+# In the Killercoda terminal, create directory
+mkdir -p ~/k8s-experiments/{k8s,locust,scripts}
+cd ~/k8s-experiments
+
+# Copy all file contents from this repository
+# (Use the Killercoda editor or paste contents)
+```
+
+### Step 3: Run Setup Script
+
+```bash
 chmod +x scripts/*.sh
-```
-
-Or copy files manually if git is unavailable:
-
-```bash
-# Create directory structure
-mkdir -p Cloud_k8s_impl/{k8s,locust,scripts}
-cd Cloud_k8s_impl
-
-# Copy file contents from this repository
-```
-
-### Step 3: Deploy the Experiment
-
-```bash
 ./scripts/setup.sh
 ```
 
-### Step 4: Access Services
+This will:
+- ✅ Install metrics-server with `--kubelet-insecure-tls`
+- ✅ Install Locust via `apt install python3-locust`  
+- ✅ Deploy php-apache (3 replicas)
+- ✅ Configure HPA (3-8 pods, 50% CPU target)
+- ✅ Configure PDB (minAvailable: 2)
 
-In Killercoda, use the "Traffic / Ports" feature:
-
-1. Click on the hamburger menu (≡) in the top-left
-2. Select "Traffic / Ports"
-3. Enter port `30089` and click "Access" for Locust UI
-4. Enter port `30080` and click "Access" for php-apache
-
-### Step 5: Run Load Test
-
-1. In Locust UI, enter:
-   - Number of users: `50`
-   - Spawn rate: `10`
-2. Click "Start Swarming"
-
-### Step 6: Inject Failures
-
-In a second terminal tab in Killercoda:
+### Step 4: Start Locust Load Generator
 
 ```bash
-cd Cloud_k8s_impl
+locust -f locust/locustfile.py --host=http://localhost:30080
+```
+
+### Step 5: Access Locust Web UI
+
+1. Click the hamburger menu (≡) in the top-left of Killercoda
+2. Select **"Traffic / Ports"**
+3. Enter port **8089** and click **"Access"**
+4. Configure test: **50 users**, spawn rate **10**
+5. Click **"Start Swarming"**
+
+### Step 6: Monitor and Observe HPA Scaling
+
+In a second terminal tab:
+```bash
+watch -n 2 'kubectl get pods,hpa -n k8s-resilience-experiment'
+```
+
+You should see:
+- HPA CPU% increasing under load
+- Replica count scaling up (3 → 4 → 5...)
+
+### Step 7: Inject Failures
+
+In a third terminal tab:
+```bash
+cd ~/k8s-experiments
 ./scripts/simulate-pod-failure.sh
 ```
 
-### Step 7: Observe and Document
+Select option **1** (Single Pod Failure) to kill a pod and watch Kubernetes replace it.
 
-Watch the Locust graphs and Kubernetes events. The experiment demonstrates:
+### Step 8: Take Validation Screenshots
 
-- Failure rate spikes during pod deletion
-- Automatic recovery as new pods start
-- Continuous service availability
+Capture screenshots of:
+1. **HPA showing CPU metrics and scaling**: `kubectl get hpa -n k8s-resilience-experiment`
+2. **Pods with restart counts**: `kubectl get pods -n k8s-resilience-experiment`
+3. **Events showing self-healing**: `kubectl get events -n k8s-resilience-experiment --sort-by='.lastTimestamp' | tail -15`
+4. **Locust UI** showing request rate and failure recovery
 
-### Note on Killercoda Limitations
+### Killercoda Limitations
 
-- Single-node cluster: Node failure scenarios are limited
-- Session timeout: Experiments may need to restart after 60 minutes
-- Resource constraints: Use moderate load (< 100 users)
+- **Single-node cluster**: Some node failure scenarios limited
+- **Session timeout**: 60 minutes, save your screenshots!
+- **Resource constraints**: Use ≤50 users for best results
 
 ---
 
@@ -796,10 +821,11 @@ Cloud_k8s_impl/
 │   ├── requirements.txt               # Python dependencies
 │   └── Dockerfile                     # Container build file
 └── scripts/
-    ├── setup.sh                       # Environment setup
+    ├── setup.sh                       # Full environment setup (metrics-server + locust + app)
+    ├── run-locust.sh                  # Start Locust load generator
     ├── simulate-pod-failure.sh        # Pod failure scenarios
     ├── simulate-node-failure.sh       # Node failure scenarios
-    ├── monitor.sh                     # Real-time monitoring
+    ├── monitor.sh                     # Real-time monitoring dashboard
     ├── scale-experiment.sh            # Scale configuration tool
     └── cleanup.sh                     # Resource cleanup
 ```

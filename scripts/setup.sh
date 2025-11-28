@@ -3,11 +3,12 @@
 # Kubernetes Resilience Experiment - Setup Script
 #===============================================================================
 # This script sets up the complete experiment environment including:
+# - Metrics Server (for HPA CPU metrics)
 # - Namespace creation
 # - Application deployment (php-apache)
 # - Horizontal Pod Autoscaler
 # - Pod Disruption Budget
-# - Locust load generator
+# - Local Locust installation (python3-locust)
 #
 # Designed for: Killercoda Kubernetes Playground
 #===============================================================================
@@ -19,6 +20,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Logging functions
@@ -36,6 +38,10 @@ log_warning() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+log_step() {
+    echo -e "${CYAN}[STEP]${NC} $1"
 }
 
 # Header
@@ -62,61 +68,125 @@ log_success "Connected to Kubernetes cluster"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 K8S_DIR="$PROJECT_DIR/k8s"
+LOCUST_DIR="$PROJECT_DIR/locust"
 
-# Step 1: Create namespace
-log_info "Creating experiment namespace..."
+#===============================================================================
+# STEP 1: Install Metrics Server (required for HPA)
+#===============================================================================
+echo ""
+log_step "STEP 1: Installing Metrics Server for HPA support..."
+echo ""
+
+# Check if metrics-server is already installed
+if kubectl get deployment metrics-server -n kube-system &> /dev/null; then
+    log_info "Metrics server already installed, checking if it needs patching..."
+else
+    log_info "Downloading metrics-server manifest..."
+    
+    # Download metrics-server manifest
+    curl -sL https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml -o /tmp/metrics-server.yaml
+    
+    # Add --kubelet-insecure-tls flag for Killercoda/playground environments
+    log_info "Patching metrics-server for insecure TLS (required for Killercoda)..."
+    sed -i '/- --metric-resolution=15s/a\        - --kubelet-insecure-tls' /tmp/metrics-server.yaml
+    
+    # Apply metrics-server
+    log_info "Applying metrics-server..."
+    kubectl apply -f /tmp/metrics-server.yaml
+    
+    # Clean up
+    rm -f /tmp/metrics-server.yaml
+fi
+
+log_info "Waiting for metrics-server to be ready..."
+kubectl rollout status deployment/metrics-server -n kube-system --timeout=120s || {
+    log_warning "Metrics server taking longer than expected. Continuing..."
+}
+
+# Verify metrics are available (may take a moment)
+log_info "Verifying metrics API (may take 30-60 seconds to populate)..."
+sleep 10
+if kubectl top nodes &> /dev/null; then
+    log_success "Metrics server is working!"
+else
+    log_warning "Metrics not yet available. They should appear within 1-2 minutes."
+fi
+
+#===============================================================================
+# STEP 2: Install Locust locally
+#===============================================================================
+echo ""
+log_step "STEP 2: Installing Locust load generator locally..."
+echo ""
+
+if command -v locust &> /dev/null; then
+    log_info "Locust is already installed"
+    locust --version
+else
+    log_info "Installing python3-locust via apt..."
+    apt-get update -qq
+    apt-get install -y -qq python3-locust
+    log_success "Locust installed successfully"
+fi
+
+#===============================================================================
+# STEP 3: Create Kubernetes namespace
+#===============================================================================
+echo ""
+log_step "STEP 3: Creating experiment namespace..."
+echo ""
+
 kubectl apply -f "$K8S_DIR/namespace.yaml"
 log_success "Namespace 'k8s-resilience-experiment' created"
 
-# Step 2: Deploy php-apache application
-log_info "Deploying php-apache application..."
+#===============================================================================
+# STEP 4: Deploy php-apache application
+#===============================================================================
+echo ""
+log_step "STEP 4: Deploying php-apache application..."
+echo ""
+
 kubectl apply -f "$K8S_DIR/php-apache-deployment.yaml"
 log_success "php-apache deployment and services created"
 
-# Step 3: Apply Horizontal Pod Autoscaler
-log_info "Configuring Horizontal Pod Autoscaler..."
-kubectl apply -f "$K8S_DIR/hpa.yaml"
-log_success "HPA configured (min: 3, max: 10 replicas)"
+#===============================================================================
+# STEP 5: Configure Horizontal Pod Autoscaler
+#===============================================================================
+echo ""
+log_step "STEP 5: Configuring Horizontal Pod Autoscaler..."
+echo ""
 
-# Step 4: Apply Pod Disruption Budget
-log_info "Configuring Pod Disruption Budget..."
+kubectl apply -f "$K8S_DIR/hpa.yaml"
+log_success "HPA configured (min: 3, max: 100 replicas, target: 50% CPU)"
+
+#===============================================================================
+# STEP 6: Configure Pod Disruption Budget
+#===============================================================================
+echo ""
+log_step "STEP 6: Configuring Pod Disruption Budget..."
+echo ""
+
 kubectl apply -f "$K8S_DIR/pod-disruption-budget.yaml"
 log_success "PDB configured (minAvailable: 2)"
 
-# Step 5: Create ConfigMap for Locust scripts
-log_info "Creating Locust scripts ConfigMap..."
-kubectl create configmap locust-scripts \
-    --from-file="$PROJECT_DIR/locust/locustfile.py" \
-    -n k8s-resilience-experiment \
-    --dry-run=client -o yaml | kubectl apply -f -
-log_success "Locust scripts ConfigMap created"
-
-# Step 6: Deploy Locust load generator
-log_info "Deploying Locust load generator..."
-kubectl apply -f "$K8S_DIR/locust-deployment.yaml"
-log_success "Locust master and workers deployed"
-
-# Wait for deployments to be ready
-log_info "Waiting for deployments to be ready..."
+#===============================================================================
+# STEP 7: Wait for deployments
+#===============================================================================
+echo ""
+log_step "STEP 7: Waiting for deployments to be ready..."
 echo ""
 
 log_info "Waiting for php-apache pods..."
-kubectl rollout status deployment/php-apache -n k8s-resilience-experiment --timeout=120s
-
-log_info "Waiting for Locust master..."
-kubectl rollout status deployment/locust-master -n k8s-resilience-experiment --timeout=120s
-
-log_info "Waiting for Locust workers..."
-kubectl rollout status deployment/locust-worker -n k8s-resilience-experiment --timeout=120s
+kubectl rollout status deployment/php-apache -n k8s-resilience-experiment --timeout=180s
 
 echo ""
 log_success "All deployments are ready!"
 
-# Display cluster status
+#===============================================================================
+# STEP 8: Verify setup
+#===============================================================================
 echo ""
-echo "==============================================================================="
-echo "    EXPERIMENT ENVIRONMENT STATUS"
-echo "==============================================================================="
+log_step "STEP 8: Verifying experiment setup..."
 echo ""
 
 log_info "Pods in experiment namespace:"
@@ -131,31 +201,9 @@ log_info "HPA Status:"
 kubectl get hpa -n k8s-resilience-experiment
 echo ""
 
-# Get access URLs
-echo ""
-echo "==============================================================================="
-echo "    ACCESS INFORMATION"
-echo "==============================================================================="
-echo ""
-
-# Get node IP (for Killercoda)
-NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-
-echo "PHP-Apache Service: http://${NODE_IP}:30080"
-echo "Locust Web UI:      http://${NODE_IP}:30089"
-echo ""
-echo "In Killercoda, you can access services using the Traffic/Ports feature"
-echo "Configure port 30089 for Locust UI and port 30080 for the application"
-echo ""
-
-echo "==============================================================================="
-echo "    SETUP COMPLETE - READY FOR EXPERIMENT"
-echo "==============================================================================="
-echo ""
-echo "Next steps:"
-echo "  1. Access Locust UI at port 30089"
-echo "  2. Start a load test with 50-100 users"
-echo "  3. Run failure simulation scripts in another terminal"
-echo "  4. Observe Kubernetes self-healing behavior"
-echo ""
-
+log_info "Testing php-apache service..."
+if curl -s --max-time 5 http://localhost:30080 > /dev/null; then
+    log_success "php-apache service is responding!"
+else
+    log_warning "php-apache service not yet responding on NodePort. It may need a moment."
+fi

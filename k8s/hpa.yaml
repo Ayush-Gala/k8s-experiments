@@ -2,12 +2,10 @@
 # Automatically scales pods based on CPU utilization
 # This demonstrates Kubernetes' ability to handle varying loads
 #
-# SCALE PROFILES:
-#   - Small (default):  minReplicas=3,  maxReplicas=10   (up to 100 users)
-#   - Medium:           minReplicas=5,  maxReplicas=30   (up to 1,000 users)
-#   - Large:            minReplicas=10, maxReplicas=100  (up to 10,000 users)
-#
-# To change scale profile, update minReplicas and maxReplicas below
+# Configuration for Killercoda (single-node, limited resources):
+#   - minReplicas: 3 (ensures availability during failures)
+#   - maxReplicas: 8 (prevents resource exhaustion on single node)
+#   - targetCPU: 50% (triggers scaling at moderate load)
 
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -22,7 +20,7 @@ spec:
     kind: Deployment
     name: php-apache
   minReplicas: 3
-  maxReplicas: 100  # Increased for high-scale testing (10,000 users)
+  maxReplicas: 8  # Limited for Killercoda single-node environment
   metrics:
   - type: Resource
     resource:
@@ -44,7 +42,7 @@ spec:
         value: 100
         periodSeconds: 15
       - type: Pods
-        value: 4  # Increased for faster scale-up
+        value: 2
         periodSeconds: 15
       selectPolicy: Max
 
