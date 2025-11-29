@@ -2,155 +2,91 @@
 Locust Load Generator for Kubernetes Resilience Experiment
 ===========================================================
 
-This load generator creates realistic HTTP traffic patterns to test
-Kubernetes' ability to maintain service availability during:
-- Pod failures
-- Node failures
-- Resource exhaustion scenarios
+BALANCED VERSION - Generates moderate CPU load for HPA scaling + self-healing.
 
-The php-apache image responds to GET requests with CPU-intensive
-calculations, making it ideal for testing autoscaling and resilience.
+Target behavior:
+- 100-200 users:  3 pods (baseline)
+- 500 users:      ~5 pods  
+- 1000 users:     ~8 pods (max)
 
-SCALE PROFILES:
-- Small:   50-100 users,   spawn rate 10    (Killercoda)
-- Medium:  500-1,000 users, spawn rate 50   (multi-node)
-- Large:   5,000-10,000 users, spawn rate 100-500 (production)
-
-Each Locust worker can handle approximately 500-1,000 simulated users.
-Scale workers proportionally for larger tests.
+The php-apache backend performs CPU calculations on each request,
+so request frequency directly impacts CPU utilization.
 """
 
-from locust import HttpUser, task, between, events, constant_pacing
-from locust.runners import MasterRunner
-import time
+from locust import HttpUser, task, between, events
 import logging
-import os
 
-# Configure logging for experiment tracking
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# High-scale mode: reduce wait times for more aggressive load
-HIGH_SCALE_MODE = os.environ.get('HIGH_SCALE_MODE', 'false').lower() == 'true'
 
-
-class PhpApacheUser(HttpUser):
+class LoadTestUser(HttpUser):
     """
-    Simulates a user making requests to the php-apache service.
+    Balanced load generator for HPA scaling and resilience testing.
     
-    The php-apache container performs CPU calculations on each request,
-    which allows us to:
-    1. Generate meaningful load for HPA scaling
-    2. Observe response time degradation during failures
-    3. Track request success/failure rates
+    Generates enough CPU load to trigger HPA scaling while
+    still allowing observation of failure/recovery patterns.
     """
     
-    # Wait between 0.5 and 2 seconds between tasks (realistic user behavior)
-    # For high-scale mode, use shorter wait times
-    wait_time = between(0.1, 0.5) if HIGH_SCALE_MODE else between(0.5, 2.0)
+    # Short wait times = more requests = higher CPU load
+    # 0.5-1.5 seconds between requests per user
+    wait_time = between(0.5, 1.5)
     
-    # Weight for user distribution (higher = more of this user type)
-    weight = 3
-    
-    # Track request statistics for experiment analysis
+    # Statistics tracking
     request_count = 0
     failure_count = 0
     
     @task(10)
-    def generate_load(self):
+    def cpu_load_request(self):
         """
-        Primary load generation task.
+        Primary load generation - triggers CPU work on the server.
         
-        Sends GET requests to the php-apache service root endpoint.
-        The service performs CPU calculations and returns a response.
-        
-        Weight: 10 (most common request type)
+        The php-apache container performs sqrt() calculations in a loop,
+        consuming CPU with each request.
         """
-        with self.client.get("/", catch_response=True, name="CPU Load Request") as response:
-            PhpApacheUser.request_count += 1
+        with self.client.get("/", catch_response=True, name="CPU Load") as response:
+            LoadTestUser.request_count += 1
             
             if response.status_code == 200:
                 response.success()
-            elif response.status_code >= 500:
-                # Server errors indicate potential pod/node issues
-                PhpApacheUser.failure_count += 1
-                response.failure(f"Server Error: {response.status_code}")
-                logger.warning(f"Server error detected: {response.status_code}")
             else:
-                response.failure(f"Unexpected status: {response.status_code}")
+                LoadTestUser.failure_count += 1
+                response.failure(f"Error: {response.status_code}")
     
-    @task(3)
+    @task(2)
     def health_check(self):
         """
-        Simulates health check requests.
-        
-        These lightweight requests help us observe service availability
-        separate from CPU-intensive operations.
-        
-        Weight: 3 (less frequent than load requests)
+        Lightweight health check - helps track availability during failures.
         """
         with self.client.get("/", catch_response=True, name="Health Check") as response:
             if response.status_code == 200:
                 response.success()
             else:
-                response.failure(f"Health check failed: {response.status_code}")
-    
-    @task(1)
-    def burst_request(self):
-        """
-        Simulates burst traffic patterns.
-        
-        Rapid successive requests to simulate traffic spikes.
-        Helps test HPA scaling behavior.
-        
-        Weight: 1 (occasional bursts)
-        """
-        for _ in range(5):
-            self.client.get("/", name="Burst Request")
+                response.failure(f"Unhealthy: {response.status_code}")
 
 
-class SteadyStateUser(HttpUser):
+class AggressiveUser(HttpUser):
     """
-    Maintains a steady baseline load for the experiment.
+    More aggressive user for faster HPA triggering.
     
-    This user class provides consistent background traffic,
-    making it easier to observe the impact of failures.
-    """
-    
-    wait_time = between(0.5, 1.5) if HIGH_SCALE_MODE else between(1.0, 3.0)
-    weight = 1  # Lower weight than PhpApacheUser
-    
-    @task
-    def steady_request(self):
-        """
-        Consistent, predictable requests for baseline measurement.
-        """
-        self.client.get("/", name="Steady State Request")
-
-
-class HighThroughputUser(HttpUser):
-    """
-    High-throughput user for large-scale testing.
-    
-    Uses constant pacing to generate predictable, high-volume traffic.
-    Enable by setting HIGH_SCALE_MODE=true environment variable.
+    Use this user type to quickly push CPU utilization up.
+    Weight of 1 means fewer of these users in the mix.
     """
     
-    # Fixed 100ms between requests = 10 RPS per user
-    wait_time = constant_pacing(0.1)
-    weight = 2 if HIGH_SCALE_MODE else 0  # Only active in high-scale mode
+    # Very short wait = high request rate
+    wait_time = between(0.1, 0.5)
+    weight = 1  # 1/4 of users will be this type
     
     @task
     def rapid_request(self):
         """
-        Rapid-fire requests for stress testing.
+        Rapid-fire requests to quickly increase CPU load.
         """
-        with self.client.get("/", catch_response=True, name="High Throughput") as response:
-            if response.status_code != 200:
-                response.failure(f"Status: {response.status_code}")
+        self.client.get("/", name="Rapid Load")
 
 
-# Event handlers for experiment logging
+# Event handlers
 @events.test_start.add_listener
 def on_test_start(environment, **kwargs):
     """Log when the load test begins."""
@@ -158,8 +94,12 @@ def on_test_start(environment, **kwargs):
     logger.info("KUBERNETES RESILIENCE EXPERIMENT - LOAD TEST STARTED")
     logger.info("=" * 60)
     logger.info(f"Target Host: {environment.host}")
-    if isinstance(environment.runner, MasterRunner):
-        logger.info("Running in distributed mode (master)")
+    logger.info("Mode: Balanced (HPA scaling + self-healing)")
+    logger.info("")
+    logger.info("Expected scaling behavior:")
+    logger.info("  100-200 users → 3 pods")
+    logger.info("  500 users     → ~5 pods")
+    logger.info("  1000 users    → ~8 pods")
     logger.info("=" * 60)
 
 
@@ -168,23 +108,9 @@ def on_test_stop(environment, **kwargs):
     """Log final statistics when test ends."""
     logger.info("=" * 60)
     logger.info("LOAD TEST COMPLETED")
-    logger.info(f"Total Requests: {PhpApacheUser.request_count}")
-    logger.info(f"Total Failures: {PhpApacheUser.failure_count}")
-    if PhpApacheUser.request_count > 0:
-        failure_rate = (PhpApacheUser.failure_count / PhpApacheUser.request_count) * 100
+    logger.info(f"Total Requests: {LoadTestUser.request_count}")
+    logger.info(f"Total Failures: {LoadTestUser.failure_count}")
+    if LoadTestUser.request_count > 0:
+        failure_rate = (LoadTestUser.failure_count / LoadTestUser.request_count) * 100
         logger.info(f"Failure Rate: {failure_rate:.2f}%")
     logger.info("=" * 60)
-
-
-@events.request.add_listener
-def on_request(request_type, name, response_time, response_length, 
-               response, context, exception, start_time, url, **kwargs):
-    """
-    Track individual request metrics for detailed analysis.
-    
-    This data helps correlate failures with specific events
-    (pod restarts, node failures, etc.)
-    """
-    if exception:
-        logger.debug(f"Request failed: {name} - {exception}")
-

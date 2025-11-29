@@ -1,6 +1,6 @@
 # PHP-Apache Deployment for Kubernetes Resilience Experiment
-# Based on: https://k8s.io/examples/application/php-apache.yaml
-# This deployment serves as our target application for load testing and failure simulation
+# Uses the CPU-intensive hpa-example image with balanced resource limits
+# Designed to trigger HPA scaling at ~500-1000 users
 
 apiVersion: apps/v1
 kind: Deployment
@@ -11,7 +11,7 @@ metadata:
     app: php-apache
     experiment: resilience-test
 spec:
-  replicas: 3  # Start with 3 replicas for resilience testing
+  replicas: 3  # Start with 3 replicas
   selector:
     matchLabels:
       run: php-apache
@@ -23,17 +23,18 @@ spec:
     spec:
       containers:
       - name: php-apache
-        image: registry.k8s.io/hpa-example
+        image: registry.k8s.io/hpa-example  # CPU-intensive workload
         ports:
         - containerPort: 80
           name: http
         resources:
+          # Balanced resources - allows scheduling while enabling HPA scaling
           limits:
-            cpu: 500m
-            memory: 128Mi
-          requests:
-            cpu: 200m
+            cpu: 200m      # Lower limit = faster CPU saturation
             memory: 64Mi
+          requests:
+            cpu: 100m      # Low request = more pods can be scheduled
+            memory: 32Mi
         # Liveness probe - Kubernetes will restart container if this fails
         livenessProbe:
           httpGet:
@@ -42,7 +43,7 @@ spec:
           initialDelaySeconds: 10
           periodSeconds: 5
           failureThreshold: 3
-          timeoutSeconds: 2
+          timeoutSeconds: 3
         # Readiness probe - Pod won't receive traffic until this passes
         readinessProbe:
           httpGet:
@@ -51,17 +52,9 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 3
           failureThreshold: 3
-          timeoutSeconds: 2
-      # Spread pods across nodes for better availability
-      topologySpreadConstraints:
-      - maxSkew: 1
-        topologyKey: kubernetes.io/hostname
-        whenUnsatisfiable: ScheduleAnyway
-        labelSelector:
-          matchLabels:
-            run: php-apache
+          timeoutSeconds: 3
 ---
-# Service to expose the php-apache deployment
+# Service to expose the deployment
 apiVersion: v1
 kind: Service
 metadata:
@@ -99,4 +92,3 @@ spec:
     name: http
   selector:
     run: php-apache
-
