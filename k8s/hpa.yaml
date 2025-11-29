@@ -1,11 +1,10 @@
 # Horizontal Pod Autoscaler for php-apache
 # Automatically scales pods based on CPU utilization
-# This demonstrates Kubernetes' ability to handle varying loads
 #
-# Configuration for Killercoda (single-node, limited resources):
-#   - minReplicas: 3 (ensures availability during failures)
-#   - maxReplicas: 8 (prevents resource exhaustion on single node)
-#   - targetCPU: 50% (triggers scaling at moderate load)
+# Expected scaling with OpenResty Lua workload:
+#   - 200 users  → 3 pods (baseline)
+#   - 500 users  → ~5 pods
+#   - 1000 users → 8 pods (max)
 
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -20,14 +19,14 @@ spec:
     kind: Deployment
     name: php-apache
   minReplicas: 3
-  maxReplicas: 8  # Limited for Killercoda single-node environment
+  maxReplicas: 8
   metrics:
   - type: Resource
     resource:
       name: cpu
       target:
         type: Utilization
-        averageUtilization: 50
+        averageUtilization: 40  # Lower target = more responsive scaling
   behavior:
     scaleDown:
       stabilizationWindowSeconds: 60

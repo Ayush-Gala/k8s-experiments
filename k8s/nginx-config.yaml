@@ -1,0 +1,55 @@
+# Nginx configuration with Lua CPU simulation
+# Uses OpenResty (nginx + Lua) to generate CPU load on each request
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: k8s-resilience-experiment
+data:
+  nginx.conf: |
+    worker_processes auto;
+    error_log /dev/stderr warn;
+    pid /tmp/nginx.pid;
+
+    events {
+        worker_connections 1024;
+    }
+
+    http {
+        access_log /dev/stdout;
+        
+        server {
+            listen 80;
+            server_name localhost;
+
+            location / {
+                default_type 'text/plain';
+                
+                # Lua script that performs CPU calculations
+                # 40,000 iterations - balanced for HPA scaling
+                content_by_lua_block {
+                    -- Perform square root calculations
+                    -- Tuned for ~8 pods at 1000 users
+                    local x = 0.0001
+                    for i = 1, 40000 do
+                        x = x + math.sqrt(x)
+                    end
+                    
+                    ngx.say("OK!")
+                }
+            }
+
+            location /health {
+                default_type 'text/plain';
+                return 200 'healthy\n';
+            }
+
+            location /light {
+                # Lightweight endpoint for health checks (no CPU work)
+                default_type 'text/plain';
+                return 200 'OK\n';
+            }
+        }
+    }
+

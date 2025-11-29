@@ -1,6 +1,6 @@
-# PHP-Apache Deployment for Kubernetes Resilience Experiment
-# Based on: https://k8s.io/examples/application/php-apache.yaml
-# This deployment serves as our target application for load testing and failure simulation
+# OpenResty (Nginx + Lua) Deployment for Kubernetes Resilience Experiment
+# Simulates CPU-intensive workload using Lua calculations
+# Each request performs 1,000,000 sqrt() operations (similar to php-apache)
 
 apiVersion: apps/v1
 kind: Deployment
@@ -11,7 +11,7 @@ metadata:
     app: php-apache
     experiment: resilience-test
 spec:
-  replicas: 3  # Start with 3 replicas for resilience testing
+  replicas: 3
   selector:
     matchLabels:
       run: php-apache
@@ -23,45 +23,45 @@ spec:
     spec:
       containers:
       - name: php-apache
-        image: registry.k8s.io/hpa-example
+        image: openresty/openresty:alpine  # Nginx + Lua for CPU simulation
         ports:
         - containerPort: 80
           name: http
         resources:
           limits:
-            cpu: 500m
-            memory: 128Mi
-          requests:
             cpu: 200m
             memory: 64Mi
-        # Liveness probe - Kubernetes will restart container if this fails
+          requests:
+            cpu: 100m
+            memory: 32Mi
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /usr/local/openresty/nginx/conf/nginx.conf
+          subPath: nginx.conf
+        # Liveness probe - use lightweight endpoint
         livenessProbe:
           httpGet:
-            path: /
+            path: /health
             port: 80
-          initialDelaySeconds: 10
+          initialDelaySeconds: 5
           periodSeconds: 5
           failureThreshold: 3
           timeoutSeconds: 2
-        # Readiness probe - Pod won't receive traffic until this passes
+        # Readiness probe - use lightweight endpoint
         readinessProbe:
           httpGet:
-            path: /
+            path: /health
             port: 80
-          initialDelaySeconds: 5
+          initialDelaySeconds: 3
           periodSeconds: 3
           failureThreshold: 3
           timeoutSeconds: 2
-      # Spread pods across nodes for better availability
-      topologySpreadConstraints:
-      - maxSkew: 1
-        topologyKey: kubernetes.io/hostname
-        whenUnsatisfiable: ScheduleAnyway
-        labelSelector:
-          matchLabels:
-            run: php-apache
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: nginx-config
 ---
-# Service to expose the php-apache deployment
+# Service to expose the deployment
 apiVersion: v1
 kind: Service
 metadata:
@@ -80,7 +80,7 @@ spec:
   selector:
     run: php-apache
 ---
-# NodePort Service for external access (useful in Killercoda)
+# NodePort Service for external access
 apiVersion: v1
 kind: Service
 metadata:
@@ -99,4 +99,3 @@ spec:
     name: http
   selector:
     run: php-apache
-
