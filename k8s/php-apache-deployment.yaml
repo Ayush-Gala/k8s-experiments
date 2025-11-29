@@ -1,6 +1,5 @@
 # OpenResty (Nginx + Lua) Deployment for Kubernetes Resilience Experiment
 # Simulates CPU-intensive workload using Lua calculations
-# Each request performs 1,000,000 sqrt() operations (similar to php-apache)
 
 apiVersion: apps/v1
 kind: Deployment
@@ -23,45 +22,42 @@ spec:
     spec:
       containers:
       - name: php-apache
-        image: openresty/openresty:alpine  # Nginx + Lua for CPU simulation
+        image: openresty/openresty:alpine
         ports:
         - containerPort: 80
           name: http
         resources:
           limits:
             cpu: 200m
-            memory: 64Mi
+            memory: 128Mi
           requests:
             cpu: 100m
-            memory: 32Mi
+            memory: 64Mi
         volumeMounts:
         - name: nginx-config
-          mountPath: /usr/local/openresty/nginx/conf/nginx.conf
-          subPath: nginx.conf
-        # Liveness probe - use lightweight endpoint
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
         livenessProbe:
           httpGet:
             path: /health
             port: 80
-          initialDelaySeconds: 5
+          initialDelaySeconds: 10
           periodSeconds: 5
           failureThreshold: 3
-          timeoutSeconds: 2
-        # Readiness probe - use lightweight endpoint
+          timeoutSeconds: 3
         readinessProbe:
           httpGet:
             path: /health
             port: 80
-          initialDelaySeconds: 3
+          initialDelaySeconds: 5
           periodSeconds: 3
           failureThreshold: 3
-          timeoutSeconds: 2
+          timeoutSeconds: 3
       volumes:
       - name: nginx-config
         configMap:
           name: nginx-config
 ---
-# Service to expose the deployment
 apiVersion: v1
 kind: Service
 metadata:
@@ -80,7 +76,6 @@ spec:
   selector:
     run: php-apache
 ---
-# NodePort Service for external access
 apiVersion: v1
 kind: Service
 metadata:
