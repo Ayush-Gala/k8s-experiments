@@ -1,6 +1,6 @@
-# PHP-Apache Deployment for Kubernetes Resilience Experiment
-# Based on: https://k8s.io/examples/application/php-apache.yaml
-# This deployment serves as our target application for load testing and failure simulation
+# Nginx Deployment for Kubernetes Resilience Experiment
+# Using lightweight nginx instead of php-apache to minimize CPU load
+# Focus: Self-healing and failure recovery, not HPA scaling
 
 apiVersion: apps/v1
 kind: Deployment
@@ -23,23 +23,23 @@ spec:
     spec:
       containers:
       - name: php-apache
-        image: registry.k8s.io/hpa-example
+        image: nginx:alpine  # Lightweight image, minimal CPU usage
         ports:
         - containerPort: 80
           name: http
         resources:
           limits:
-            cpu: 500m
-            memory: 128Mi
+            cpu: 100m      # Reduced from 500m
+            memory: 64Mi   # Reduced from 128Mi
           requests:
-            cpu: 200m
-            memory: 64Mi
+            cpu: 50m       # Reduced from 200m
+            memory: 32Mi   # Reduced from 64Mi
         # Liveness probe - Kubernetes will restart container if this fails
         livenessProbe:
           httpGet:
             path: /
             port: 80
-          initialDelaySeconds: 10
+          initialDelaySeconds: 5
           periodSeconds: 5
           failureThreshold: 3
           timeoutSeconds: 2
@@ -48,7 +48,7 @@ spec:
           httpGet:
             path: /
             port: 80
-          initialDelaySeconds: 5
+          initialDelaySeconds: 3
           periodSeconds: 3
           failureThreshold: 3
           timeoutSeconds: 2
@@ -61,7 +61,7 @@ spec:
           matchLabels:
             run: php-apache
 ---
-# Service to expose the php-apache deployment
+# Service to expose the deployment
 apiVersion: v1
 kind: Service
 metadata:
@@ -99,4 +99,3 @@ spec:
     name: http
   selector:
     run: php-apache
-
